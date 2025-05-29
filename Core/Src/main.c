@@ -44,7 +44,13 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+uint8_t tx_buff[] = {0,1,2,3,4,5,6,7,8,9};
+uint8_t rx_buff[1] = {0};
 
+uint8_t led = 0;
+uint16_t ledTimer = 0;
+
+float voltageSent = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -55,7 +61,7 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-uint8_t tx_buff[] = {0,1,2,3,4,5,6,7,8,9};
+
 /* USER CODE END 0 */
 
 /**
@@ -91,8 +97,9 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
+  HAL_UART_Receive_IT(&huart2, rx_buff, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -100,11 +107,67 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
-	  HAL_Delay(200);
-	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
-	  HAL_Delay(200);
+
     /* USER CODE BEGIN 3 */
+
+	  //HAL_UART_Transmit_IT(&huart2, tx_buff, 10);
+
+
+//	  HAL_UART_Receive_IT(&huart1, rx_buff, 1);
+//
+//	  if (rx_buff[0] == 'a') {
+//		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+//		  HAL_Delay(50);
+//		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+//		  HAL_Delay(50);
+//		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+//		  HAL_Delay(50);
+//		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+//		  HAL_Delay(50);
+//	  }
+//
+//
+//	  else if (rx_buff[0] == 'b') {
+//		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+//		  HAL_Delay(300);
+//		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+//		  HAL_Delay(300);
+//		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+//		  HAL_Delay(300);
+//		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+//		  HAL_Delay(300);
+//	  }
+
+	  if(rx_buff[0] != 0){
+		  if(rx_buff[0] <= '9' && rx_buff[0] >= '0'){
+			  voltageSent = (int)(rx_buff[0] - '0') / 9.0 * 5;
+
+		  }else if(rx_buff[0] == 'M') { // Motor on Brake off
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET); // Motor on
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET); //Brake off
+		  }else if(rx_buff[0] == 'm') { // Motor off Brake off
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET); //Brake off
+		  }else if(rx_buff[0] == 'b') { // Motor off Brake on
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
+		  }
+
+
+		  rx_buff[0] = 0;
+	  }
+
+	  ledTimer ++;
+	  if(ledTimer > 200){
+		  ledTimer = 0;
+		  led = !led;
+		  if(led){
+			  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+		  }else{
+			  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+		  }
+	  }
+	  HAL_Delay(1);
   }
   /* USER CODE END 3 */
 }
@@ -149,7 +212,10 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+	void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
+		  HAL_UART_Receive_IT(&huart2, rx_buff, 1);
+		  HAL_UART_Transmit_IT(&huart2, rx_buff, 1);
+	}
 /* USER CODE END 4 */
 
 /**
