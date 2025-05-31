@@ -18,12 +18,15 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "i2c.h"
+#include "spi.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "MCP4725.h"
+#include "nrf24l01p.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,21 +49,27 @@
 /* USER CODE BEGIN PV */
 uint8_t tx_buff[] = {0,1,2,3,4,5,6,7,8,9};
 uint8_t rx_buff[1] = {0};
+uint8_t rx_data[NRF24L01P_PAYLOAD_LENGTH] = {0};
+
+
 
 uint8_t led = 0;
 uint16_t ledTimer = 0;
-
-float voltageSent = 0;
+uint16_t voltageSent = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
+uint8_t setValue(uint16_t value);
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+// First, create an MCP4725 object:
+MCP4725 myMCP4725;
 
 /* USER CODE END 0 */
 
@@ -98,8 +107,42 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
+  MX_I2C1_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   HAL_UART_Receive_IT(&huart2, rx_buff, 1);
+
+
+  // initialize radio
+  nrf24l01p_rx_init(2500, _1Mbps);
+
+  // Second, initialize the MCP4725 object:
+  myMCP4725 = MCP4725_init(&hi2c1, MCP4725A0_ADDR_A00, 3.30);
+
+  // Check the connection:
+  if(MCP4725_isConnected(&myMCP4725)){
+
+	  /* Print that the DAC is connected */
+	  uint8_t success_arr[] = {'g','o','o','d'};
+	  HAL_UART_Transmit_IT(&huart2, success_arr, 4);
+  }
+  else{
+
+	 /* Print that the DAC is NOT connected */
+		uint8_t fail_arr[] = {'b','a','d'};
+		HAL_UART_Transmit_IT(&huart2, fail_arr, 3);
+
+}
+
+	// default off
+	setValue(0);
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
+
+	// set radio address
+//	uint8_t radio_status = set_address("2Node");
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -110,7 +153,8 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	  //HAL_UART_Transmit_IT(&huart2, tx_buff, 10);
+
+	  HAL_UART_Transmit_IT(&huart2, rx_data, 1);
 
 
 //	  HAL_UART_Receive_IT(&huart1, rx_buff, 1);
@@ -138,9 +182,12 @@ int main(void)
 //		  HAL_Delay(300);
 //	  }
 
+
+
 	  if(rx_buff[0] != 0){
 		  if(rx_buff[0] <= '9' && rx_buff[0] >= '0'){
-			  voltageSent = (int)(rx_buff[0] - '0') / 9.0 * 5;
+			  voltageSent = (uint16_t)((int)(rx_buff[0] - '0') / 9.0 * 4095);
+			  setValue(voltageSent);
 
 		  }else if(rx_buff[0] == 'M') { // Motor on Brake off
 			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET); // Motor on
@@ -151,6 +198,12 @@ int main(void)
 		  }else if(rx_buff[0] == 'b') { // Motor off Brake on
 			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
 			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
+		  }else if(rx_buff[0] == 'd') { // sending voltage
+			  setValue(2048); // half of 3.3v
+		  }else if(rx_buff[0] == 'e') { // sending voltage
+			  setValue(0); // a fourth of 3.3v
+		  }else if(rx_buff[0] == 'f') { // sending voltage
+			  setValue(4095); // a fourth of 3.3v
 		  }
 
 
@@ -216,6 +269,25 @@ void SystemClock_Config(void)
 		  HAL_UART_Receive_IT(&huart2, rx_buff, 1);
 		  HAL_UART_Transmit_IT(&huart2, rx_buff, 1);
 	}
+
+	uint8_t setValue(uint16_t value){
+		return MCP4725_setValue(&myMCP4725, value, MCP4725_FAST_MODE, MCP4725_POWER_DOWN_OFF);
+	}
+
+	// for radio recieve
+	void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+	{
+		if(GPIO_Pin == NRF24L01P_IRQ_PIN_NUMBER) {
+		    nrf24l01p_rx_receive(rx_data); // read data when data ready flag is set
+		    uint8_t success_arr[] = {'y','e','s'};
+		    HAL_UART_Transmit_IT(&huart2, success_arr, 3);
+		}
+
+
+
+	}
+
+
 /* USER CODE END 4 */
 
 /**
