@@ -59,7 +59,7 @@ static uint8_t write_register(uint8_t reg, uint8_t value)
 }
 
 
-uint8_t set_address(char* string)
+uint8_t set_address(uint8_t* string)
 {
     uint8_t command = NRF24L01P_CMD_W_REGISTER | (0x0A);
     uint8_t status;

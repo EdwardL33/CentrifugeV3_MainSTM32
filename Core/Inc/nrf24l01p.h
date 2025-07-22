@@ -28,7 +28,7 @@
 #define NRF24L01P_IRQ_PIN_PORT            GPIOB
 #define NRF24L01P_IRQ_PIN_NUMBER          GPIO_PIN_1
 
-#define NRF24L01P_PAYLOAD_LENGTH          12     // 1 - 32bytes
+#define NRF24L01P_PAYLOAD_LENGTH          14     // 1 - 32bytes
 
 
 /* nRF24L01+ typedefs */
@@ -60,7 +60,7 @@ void nrf24l01p_tx_init(channel MHz, air_data_rate bps);
 
 void nrf24l01p_rx_receive(uint8_t* rx_payload);
 void nrf24l01p_tx_transmit(uint8_t* tx_payload);
-uint8_t set_address(char* string);
+uint8_t set_address(uint8_t* string);
 
 // Check tx_ds or max_rt
 void nrf24l01p_tx_irq();
