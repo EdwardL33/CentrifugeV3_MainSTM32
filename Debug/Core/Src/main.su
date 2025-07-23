@@ -1,6 +1,7 @@
-../Core/Src/main.c:119:5:main	304	static
-../Core/Src/main.c:402:6:SystemClock_Config	72	static
-../Core/Src/main.c:440:6:HAL_UART_RxCpltCallback	24	static
-../Core/Src/main.c:555:9:setValue	16	static
-../Core/Src/main.c:560:6:HAL_GPIO_EXTI_Callback	24	static
-../Core/Src/main.c:593:6:Error_Handler	4	static,ignoring_inline_asm
+../Core/Src/main.c:129:5:main	328	static
+../Core/Src/main.c:424:6:SystemClock_Config	72	static
+../Core/Src/main.c:462:6:HAL_UART_RxCpltCallback	24	static
+../Core/Src/main.c:577:9:setValue	16	static
+../Core/Src/main.c:582:6:HAL_GPIO_EXTI_Callback	24	static
+../Core/Src/main.c:613:6:collect_data	8	static
+../Core/Src/main.c:631:6:Error_Handler	4	static,ignoring_inline_asm

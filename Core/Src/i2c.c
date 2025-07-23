@@ -71,7 +71,7 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef* i2cHandle)
     PB8     ------> I2C1_SCL
     PB9     ------> I2C1_SDA
     */
-    GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9;
+    GPIO_InitStruct.Pin = DAC_SCL_Pin|DAC_SDA_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
@@ -107,9 +107,9 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)
     PB8     ------> I2C1_SCL
     PB9     ------> I2C1_SDA
     */
-    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_8);
+    HAL_GPIO_DeInit(DAC_SCL_GPIO_Port, DAC_SCL_Pin);
 
-    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_9);
+    HAL_GPIO_DeInit(DAC_SDA_GPIO_Port, DAC_SDA_Pin);
 
     /* I2C1 interrupt Deinit */
     HAL_NVIC_DisableIRQ(I2C1_EV_IRQn);
