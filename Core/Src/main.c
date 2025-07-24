@@ -79,9 +79,13 @@ const uint32_t countMillis = 500; // half a second
 float rpm = 0;
 float sum = 0;
 
+float des_rpm = 0;
+
 bool braking = false;
 bool dataNew = false;
 volatile bool uart_ready = true;
+bool inputState = false;
+bool lastInputState = false;
 
 uint8_t led = 0;
 uint16_t ledTimer = 0;
@@ -168,7 +172,7 @@ int main(void)
 	nrf24l01p_rx_init(2500, _250kbps);
 
 	// Second, initialize the MCP4725 object:
-	myMCP4725 = MCP4725_init(&hi2c1, MCP4725A0_ADDR_A00, 3.30);
+	myMCP4725 = MCP4725_init(&hi2c1, MCP4725A0_ADDR_A00, 5.0);
 
 	// Check the connection:
 	if(MCP4725_isConnected(&myMCP4725)){
@@ -202,6 +206,12 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+		inputState = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_14);
+		// measure frequency of pulse from speed pin
+	    if (inputState != lastInputState) {
+			counter++;
+			lastInputState = inputState;
+	    }
 
 
 		// if imu data is coming in
@@ -279,6 +289,9 @@ int main(void)
 				parseChar = *(rx_buff + i);
 			}
 
+			// reset buffer for clean data
+			memset(rx_buff, 0, 500);
+
 			// reached stop "u" so switch to ready mode
 			state = 'p';
 		}
@@ -348,13 +361,16 @@ int main(void)
 				else {
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET); // Motor on
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET); //Brake off
-					float desired_mps = desired_g * 9.81; // meters per second for the equation
-					float c = (9.81/desired_mps);
+//					float desired_mps = desired_g * 9.81; // meters per second for the equation
+//					float c = (9.81/desired_mps);
+//					float a = 1.4; // centrifuge arm radius meters
+//					float b = 0; // gondola radius meters (0.25 if gondola exists)
+//					float omega = sqrt((desired_mps - 9.81) / (a + (b *sqrt(1-(c*c))))); // equation to get desired omega from desired mps
+
 					float a = 1.4; // centrifuge arm radius meters
-					float b = 0; // gondola radius meters (0.25 if gondola exists)
-					float omega = sqrt((desired_mps - 9.81) / (a + (b *sqrt(1-(c*c))))); // equation to get desired omega from desired mps
-					float rpm = (omega /3.1415) * 30;
-					voltage_to_be_sent = rpm * 25 * ((5-0.2)/(4000-160)); // equation for the motor that translates rpm to voltage to be sent
+					float omega = sqrt( (9.81 * sqrt(desired_g*desired_g - 1)) / a);
+					des_rpm = (omega /3.1415) * 30;
+					voltage_to_be_sent = des_rpm * 25 * ((5-0.2)/(4000-160)); // equation for the motor that translates rpm to voltage to be sent
 					if (voltage_to_be_sent > 5) {
 						voltage_to_be_sent = 5;
 					}
@@ -370,34 +386,29 @@ int main(void)
 					//				HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
 
 				}
-				//				printTimer++;
-				//				if (printTimer > 200) {
-				//					printTimer = 0;
-				//					char msg[128];
-				//					int len = snprintf(msg, sizeof(msg),
-				//							"%lu %.2f %.2f %.2f\n",
-				//							time_elapsed, desired_g, current_g, voltage_to_be_sent);
-				//
-				//					// Send over UART using interrupt
-				//					HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
-				//				}
-
-				if ((HAL_GetTick() - previousCountMillis) >= countMillis) {
-					previousCountMillis += countMillis;
-
-					if (HAL_GetTick() - previousCountMillis >= countMillis) {
-					        previousCountMillis = HAL_GetTick();  // catch-up fix
-					}
-
-					collect_data();
+				printTimer++;
+				if (printTimer > 100) {
+					printTimer = 0;
 					char msg[128];
 					int len = snprintf(msg, sizeof(msg),
-							"%lu %.2f %.2f %.2f %.2f %.2f\n",
-							time_elapsed, desired_g, current_g, voltage_to_be_sent, rpm, avgRPM);
+							"%lu %.2f %.2f %.2f\n",
+							time_elapsed, desired_g, current_g, voltage_to_be_sent);
 
 					// Send over UART using interrupt
 					HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
 				}
+
+//				if ((HAL_GetTick() - previousCountMillis) >= countMillis) {
+//					previousCountMillis = HAL_GetTick();
+//					collect_data();
+//					char msg[128];
+//					int len = snprintf(msg, sizeof(msg),
+//							"%lu %.2f %.2f %.2f %.2f %.2f\n",
+//							time_elapsed, desired_g, current_g, voltage_to_be_sent, rpm, des_rpm);
+//
+//					// Send over UART using interrupt
+//					HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
+//				}
 			}
 		}
 
@@ -546,6 +557,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 		// go to idle mode
 		if(recentChar == 'q') {
 			state = 'i';
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
 		}
 		break;
 
@@ -583,8 +596,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
 	if(GPIO_Pin == NRF24L01P_IRQ_PIN_NUMBER) {
 		nrf24l01p_rx_receive(rx_data); // read data when data ready flag is set
-		//		    uint8_t success_arr[] = {'y','e','s'};
-		//		    HAL_UART_Transmit_IT(&huart2, success_arr, 3);
 		accel_x = (int16_t)(rx_data[0] | (rx_data[1] << 8)) / 2048.f;
 		accel_y = (int16_t)(rx_data[2] | (rx_data[3] << 8)) / 2048.f;
 		accel_z = (int16_t)(rx_data[4] | (rx_data[5] << 8)) / 2048.f;
@@ -602,10 +613,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
 		current_g = sqrt((accel_x*accel_x) + (accel_y*accel_y) + (accel_z*accel_z));
 		dataNew = true;
-	}
-
-	if(GPIO_Pin == GPIO_PIN_8) { // PA8
-		counter++;
 	}
 }
 

@@ -64,9 +64,6 @@ void Error_Handler(void);
 #define IRQ_Pin GPIO_PIN_1
 #define IRQ_GPIO_Port GPIOB
 #define IRQ_EXTI_IRQn EXTI1_IRQn
-#define Speed_Pin GPIO_PIN_8
-#define Speed_GPIO_Port GPIOA
-#define Speed_EXTI_IRQn EXTI9_5_IRQn
 #define DAC_SCL_Pin GPIO_PIN_8
 #define DAC_SCL_GPIO_Port GPIOB
 #define DAC_SDA_Pin GPIO_PIN_9
