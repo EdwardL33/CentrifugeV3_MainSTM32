@@ -1,7 +1,7 @@
-../Core/Src/main.c:133:5:main	28
-../Core/Src/main.c:435:6:SystemClock_Config	3
-../Core/Src/main.c:473:6:HAL_UART_RxCpltCallback	19
-../Core/Src/main.c:590:9:setValue	1
-../Core/Src/main.c:595:6:HAL_GPIO_EXTI_Callback	2
-../Core/Src/main.c:620:6:collect_data	1
-../Core/Src/main.c:638:6:Error_Handler	1
+../Core/Src/main.c:151:5:main	30
+../Core/Src/main.c:483:6:SystemClock_Config	3
+../Core/Src/main.c:521:6:HAL_UART_RxCpltCallback	20
+../Core/Src/main.c:642:9:setValue	1
+../Core/Src/main.c:647:6:HAL_GPIO_EXTI_Callback	2
+../Core/Src/main.c:672:6:collect_data	1
+../Core/Src/main.c:690:6:Error_Handler	1

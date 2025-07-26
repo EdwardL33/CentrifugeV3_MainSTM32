@@ -54,10 +54,17 @@
 #define MAX_POINTS 200
 #define RX_BUFF_SIZE 500
 
+
+#define integralCap 300
+#define kP 0.8//1
+#define kI 0//0.005
+#define kD 0//0.00001
+
 uint8_t tx_buff[] = {0,1,2,3,4,5,6,7,8,9};
 uint8_t rx_buff[RX_BUFF_SIZE] = {0};
 uint8_t rx_buff_arm = 0;
 uint8_t rx_data[NRF24L01P_PAYLOAD_LENGTH] = {0};
+static char msg[64];
 
 // imu datas
 float accel_x = 0;
@@ -71,6 +78,7 @@ float current_g = 0;
 
 float voltage_to_be_sent = 0;
 
+// speed from motor
 float avgRPM = 0;
 float numPoints = 0;
 volatile uint32_t counter = 0;
@@ -78,8 +86,18 @@ uint32_t previousCountMillis = 0;
 const uint32_t countMillis = 500; // half a second
 float rpm = 0;
 float sum = 0;
-
 float des_rpm = 0;
+
+
+// PID controller
+float pid = 0;
+float lastError = 0;
+float error = 0;
+float integral = 0;
+uint32_t currTime = 0;
+uint32_t prevTime = 0;
+uint32_t dt = 0;
+
 
 bool braking = false;
 bool dataNew = false;
@@ -206,6 +224,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+		currTime = HAL_GetTick();
 		inputState = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_14);
 		// measure frequency of pulse from speed pin
 	    if (inputState != lastInputState) {
@@ -213,37 +232,46 @@ int main(void)
 			lastInputState = inputState;
 	    }
 
+	    //measure voltage to rpm
+//		if ((HAL_GetTick() - previousCountMillis) >= countMillis) {
+//			previousCountMillis = HAL_GetTick();
+//			collect_data();
+//			float volts=0;
+//			volts = ((float)voltageSent / 4095) * 5.0;
+//
+//			float omega = sqrt( (9.81 * sqrt(current_g*current_g - 1)) / 1.4);
+//			des_rpm = (omega /3.1415) * 30;
+//
+//
+//			int len = snprintf(msg, sizeof(msg),
+//					"%.2f %.2f %.2f %.2f %.2f\n",
+//					volts, des_rpm, rpm, avgRPM, current_g);
+//
+//			// Send over UART using interrupt
+//			HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
+//		}
+
 
 		// if imu data is coming in
 		if(dataNew){
 			dataNew = false;
+//			 send radio data to serial monitor
+//						char msg[128];
+//						int len = snprintf(msg, sizeof(msg),
+//								"%.2f %.2f %.2f | "
+//								"%.2f %.2f %.2f | "
+//								"%.2fC\n",
+//								accel_x, accel_y, accel_z,
+//								gyro_x, gyro_y, gyro_z,
+//								temperature);
 
-			// calibrate incoming data using offset
-			//			accel_x -= 0.04;
-			//			accel_y += 0.01;
-			//			accel_z -= 0.05;
-			//			gyro_x += 4.7;
-			//			gyro_y -= 1.9;
-			//			gyro_z += 0.5;
-			//
-			//			current_g = sqrt((accel_x*accel_x) + (accel_y*accel_y) + (accel_z*accel_z));
-
-			// send radio data to serial monitor
-			//			char msg[128];
-			//			int len = snprintf(msg, sizeof(msg),
-			//					"%.2f %.2f %.2f | "
-			//					"%.2f %.2f %.2f | "
-			//					"%.2fC\n",
-			//					accel_x, accel_y, accel_z,
-			//					gyro_x, gyro_y, gyro_z,
-			//					temperature);
-			//
-			//			// Send over UART using interrupt
-			//			HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
+						// Send over UART using interrupt
+//						HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
 		}
 
 		// evaluation mode (parsing the profile)
 		if (state == 'e') {
+			dt = currTime - prevTime;
 			int i = upload_pointer; // where the instruction starts in our rx_buffer
 			char parseChar = *(rx_buff + i); // grab the first character our rx_buffer
 			char numberBuffer[40] = {0}; // create a number buffer to atoi into our ms and g arrays
@@ -370,12 +398,34 @@ int main(void)
 					float a = 1.4; // centrifuge arm radius meters
 					float omega = sqrt( (9.81 * sqrt(desired_g*desired_g - 1)) / a);
 					des_rpm = (omega /3.1415) * 30;
-					voltage_to_be_sent = des_rpm * 25 * ((5-0.2)/(4000-160)); // equation for the motor that translates rpm to voltage to be sent
-					if (voltage_to_be_sent > 5) {
-						voltage_to_be_sent = 5;
+					voltage_to_be_sent = (0.0433*des_rpm) + (-0.000354 * des_rpm*des_rpm) + (0.00000304 * des_rpm*des_rpm*des_rpm); // cubic FF
+//					voltage_to_be_sent = des_rpm * 25 * ((5-0.2)/(4000-160)); // equation for the motor that translates rpm to voltage to be sent
+
+//					if (voltage_to_be_sent > 5) {
+//						voltage_to_be_sent = 5;
+//					}
+					error = desired_g - current_g;
+					integral += (dt/1000.0) * (error + lastError) / 2;
+
+					if (integral > integralCap){
+						integral  = integralCap;
 					}
-					int scaled_voltage = (uint16_t)((voltage_to_be_sent / 5) * 4095); // scale the voltage from 0-3.3 to 0-4095 to be sent though the DAC
+
+					pid = kP * error + kI * integral + kD * (error - lastError) / (dt/1000.0) + voltage_to_be_sent;
+					if (pid > 5) {
+						pid = 5;
+					}
+			        if (pid < 0){
+			          pid = 0;
+			        }
+
+
+
+					int scaled_voltage = (uint16_t)((pid / 5) * 4095); // scale the voltage from 0-5 to 0-4095 to be sent though the DAC
 					setValue(scaled_voltage);
+
+				    lastError = error;
+				    prevTime = currTime;
 
 					//				char msg[128];
 					//				int len = snprintf(msg, sizeof(msg),
@@ -389,11 +439,10 @@ int main(void)
 				printTimer++;
 				if (printTimer > 100) {
 					printTimer = 0;
-					char msg[128];
+					memset(msg, 0, sizeof(msg));  // clear garbage from buffer
 					int len = snprintf(msg, sizeof(msg),
-							"%lu %.2f %.2f %.2f\n",
-							time_elapsed, desired_g, current_g, voltage_to_be_sent);
-
+							"%lu %.2f %.2f %.2f %.2f\n",
+							time_elapsed, desired_g, current_g, voltage_to_be_sent, des_rpm);
 					// Send over UART using interrupt
 					HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
 				}
@@ -401,10 +450,9 @@ int main(void)
 //				if ((HAL_GetTick() - previousCountMillis) >= countMillis) {
 //					previousCountMillis = HAL_GetTick();
 //					collect_data();
-//					char msg[128];
 //					int len = snprintf(msg, sizeof(msg),
-//							"%lu %.2f %.2f %.2f %.2f %.2f\n",
-//							time_elapsed, desired_g, current_g, voltage_to_be_sent, rpm, des_rpm);
+//							"%.2f %.2f\n",
+//							voltage_to_be_sent, rpm);
 //
 //					// Send over UART using interrupt
 //					HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
@@ -514,7 +562,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
 		}
-
 		// go to idle mode
 		else if(recentChar == 'm') {
 			state = 'i';
@@ -581,6 +628,11 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 
 	//	uint8_t char_arr[1] = {recentChar};
 	//	HAL_UART_Transmit_IT(&huart2, char_arr, 1);
+
+	if (recentChar == 'x') {
+	    avgRPM = 0;
+	    numPoints = 0;
+	}
 
 	// necessary to prime the next callback
 	HAL_UART_Receive_IT(&huart2, rx_buff + rx_buff_arm, 1); // the next character will be stored in the next index
