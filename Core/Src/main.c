@@ -56,9 +56,9 @@
 
 
 #define integralCap 300
-#define kP 0.8//1
-#define kI 0//0.005
-#define kD 0//0.00001
+#define kP 2 //1
+#define kI 0 //0.005
+#define kD 0 //0.00001
 
 uint8_t tx_buff[] = {0,1,2,3,4,5,6,7,8,9};
 uint8_t rx_buff[RX_BUFF_SIZE] = {0};
@@ -242,10 +242,16 @@ int main(void)
 //			float omega = sqrt( (9.81 * sqrt(current_g*current_g - 1)) / 1.4);
 //			des_rpm = (omega /3.1415) * 30;
 //
+//			// relate RPM to volts
+////			int len = snprintf(msg, sizeof(msg),
+////					"%.2f %.2f %.2f %.2f %.2f\n",
+////					volts, des_rpm, rpm, avgRPM, current_g);
 //
+//			// motor no brake descent rate
+//			uint8_t motor = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
 //			int len = snprintf(msg, sizeof(msg),
-//					"%.2f %.2f %.2f %.2f %.2f\n",
-//					volts, des_rpm, rpm, avgRPM, current_g);
+//					"%.2f %.2f %u\n",
+//					volts, current_g, motor);
 //
 //			// Send over UART using interrupt
 //			HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
@@ -362,7 +368,7 @@ int main(void)
 				// calculate descent slope for braking on sharp changes
 				float slope_gps = (next_desired_g - prev_desired_g) / ((next_desired_ms - prev_desired_ms) / 1000);
 				float desired_g = ((next_desired_g - prev_desired_g) * (time_elapsed - prev_desired_ms) / (next_desired_ms - prev_desired_ms)) + prev_desired_g;
-				float descent_no_brake = -0.368*desired_g + 0.311;
+				float descent_no_brake = -0.312*desired_g + 0.278;
 
 				// brake when motor coasting isnt enough
 				if(slope_gps < descent_no_brake) {
@@ -370,6 +376,7 @@ int main(void)
 				} else {
 					braking = false;
 				}
+				braking = false;
 
 				// when brake mode on, brake if our desired_g is greater than our current_g
 				if (braking) {
@@ -437,12 +444,12 @@ int main(void)
 
 				}
 				printTimer++;
-				if (printTimer > 100) {
+				if (printTimer > 500) {
 					printTimer = 0;
 					memset(msg, 0, sizeof(msg));  // clear garbage from buffer
 					int len = snprintf(msg, sizeof(msg),
-							"%lu %.2f %.2f %.2f %.2f\n",
-							time_elapsed, desired_g, current_g, voltage_to_be_sent, des_rpm);
+							"%lu %.2f %.2f\n",
+							time_elapsed, desired_g, current_g);
 					// Send over UART using interrupt
 					HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
 				}
