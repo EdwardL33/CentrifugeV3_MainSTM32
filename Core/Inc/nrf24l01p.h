@@ -75,6 +75,7 @@ void nrf24l01p_ptx_mode();
 void nrf24l01p_power_up();
 void nrf24l01p_power_down();
 
+uint8_t nrf24l01p_get_status_fast();
 uint8_t nrf24l01p_get_status();
 uint8_t nrf24l01p_get_fifo_status();
 

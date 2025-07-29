@@ -58,7 +58,7 @@
 #define integralCap 300
 #define kP 2 //1
 #define kI 0 //0.005
-#define kD 0 //0.00001
+#define kD 1 //0.00001
 
 uint8_t tx_buff[] = {0,1,2,3,4,5,6,7,8,9};
 uint8_t rx_buff[RX_BUFF_SIZE] = {0};
@@ -110,7 +110,8 @@ uint16_t ledTimer = 0;
 uint16_t voltageSent = 0;
 uint32_t time_start = 0;
 uint32_t time_elapsed = 0;
-uint16_t printTimer = 0;
+uint32_t lastPrintTime = 0;
+uint32_t printInterval = 500; // ms for every print
 
 uint32_t profile_ms[MAX_POINTS] = {0};
 float profile_g[MAX_POINTS] = {0};
@@ -241,43 +242,35 @@ int main(void)
 //
 //			float omega = sqrt( (9.81 * sqrt(current_g*current_g - 1)) / 1.4);
 //			des_rpm = (omega /3.1415) * 30;
-//
-//			// relate RPM to volts
-////			int len = snprintf(msg, sizeof(msg),
-////					"%.2f %.2f %.2f %.2f %.2f\n",
-////					volts, des_rpm, rpm, avgRPM, current_g);
-//
-//			// motor no brake descent rate
+
+			// relate RPM to volts
+//			int len = snprintf(msg, sizeof(msg),
+//					"%.2f %.2f %.2f %.2f %.2f\n",
+//					volts, des_rpm, rpm, avgRPM, current_g);
+
+			// motor no brake descent rate
 //			uint8_t motor = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
 //			int len = snprintf(msg, sizeof(msg),
 //					"%.2f %.2f %u\n",
 //					volts, current_g, motor);
-//
-//			// Send over UART using interrupt
+
+			// Send over UART using interrupt
 //			HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
 //		}
 
 
-		// if imu data is coming in
-		if(dataNew){
-			dataNew = false;
-//			 send radio data to serial monitor
-//						char msg[128];
-//						int len = snprintf(msg, sizeof(msg),
-//								"%.2f %.2f %.2f | "
-//								"%.2f %.2f %.2f | "
-//								"%.2fC\n",
-//								accel_x, accel_y, accel_z,
-//								gyro_x, gyro_y, gyro_z,
-//								temperature);
-
-						// Send over UART using interrupt
-//						HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
-		}
+//		// if imu shits itself (PID DIES)
+//		if(dataNew){
+//			dataNew = false;
+//		}else {
+//			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
+//			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
+//			state = 'i';
+//		}
 
 		// evaluation mode (parsing the profile)
 		if (state == 'e') {
-			dt = currTime - prevTime;
+			dt = currTime - prevTime; // for PID
 			int i = upload_pointer; // where the instruction starts in our rx_buffer
 			char parseChar = *(rx_buff + i); // grab the first character our rx_buffer
 			char numberBuffer[40] = {0}; // create a number buffer to atoi into our ms and g arrays
@@ -362,7 +355,7 @@ int main(void)
 				if (next_desired_ms < prev_desired_ms) {
 					state = 'i';
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
-					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET); //Brake off
+					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
 				}
 
 				// calculate descent slope for braking on sharp changes
@@ -370,23 +363,27 @@ int main(void)
 				float desired_g = ((next_desired_g - prev_desired_g) * (time_elapsed - prev_desired_ms) / (next_desired_ms - prev_desired_ms)) + prev_desired_g;
 				float descent_no_brake = -0.312*desired_g + 0.278;
 
-				// brake when motor coasting isnt enough
-				if(slope_gps < descent_no_brake) {
-					braking = true;
-				} else {
-					braking = false;
-				}
 				braking = false;
+				// only set braking if the slope is negative
+				if (slope_gps < 0) {
+					// brake when profile is too sharp (would be greater than natural descent of the motor)
+					if(fabsf(slope_gps) > fabsf(descent_no_brake)) {
+						braking = true;
+					} else {
+						braking = false;
+					}
+				}
+				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET); // Motor on (for when it got turned off by brake mode last time)
 
 				// when brake mode on, brake if our desired_g is greater than our current_g
 				if (braking) {
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off when in brake mode
-					if (desired_g > current_g) {
+					if (desired_g < current_g) {
 						HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
 					}
 
 					// let the motor coast to reduce speed instead
-					else if(desired_g <= current_g) {
+					else if(desired_g >= current_g) {
 						HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET); //Brake off
 					}
 					setValue(0);
@@ -406,11 +403,6 @@ int main(void)
 					float omega = sqrt( (9.81 * sqrt(desired_g*desired_g - 1)) / a);
 					des_rpm = (omega /3.1415) * 30;
 					voltage_to_be_sent = (0.0433*des_rpm) + (-0.000354 * des_rpm*des_rpm) + (0.00000304 * des_rpm*des_rpm*des_rpm); // cubic FF
-//					voltage_to_be_sent = des_rpm * 25 * ((5-0.2)/(4000-160)); // equation for the motor that translates rpm to voltage to be sent
-
-//					if (voltage_to_be_sent > 5) {
-//						voltage_to_be_sent = 5;
-//					}
 					error = desired_g - current_g;
 					integral += (dt/1000.0) * (error + lastError) / 2;
 
@@ -433,23 +425,20 @@ int main(void)
 
 				    lastError = error;
 				    prevTime = currTime;
-
-					//				char msg[128];
-					//				int len = snprintf(msg, sizeof(msg),
-					//						"%u %.2f\n %d",
-					//						time_elapsed, desired_g, scaled_voltage);
-					//
-					//				// Send over UART using interrupt
-					//				HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
-
 				}
-				printTimer++;
-				if (printTimer > 500) {
-					printTimer = 0;
-					memset(msg, 0, sizeof(msg));  // clear garbage from buffer
+
+				if (HAL_GetTick() - lastPrintTime >= printInterval) {
+				    lastPrintTime = HAL_GetTick();
+				    uint8_t BRAKE = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9);
+				    uint8_t MOTOR = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
+				    memset(msg, 0, sizeof(msg));  // clear garbage from buffer
+//					int len = snprintf(msg, sizeof(msg),
+//							"%lu %.2f %.2f %u %u %.2f %.2f\n",
+//							time_elapsed, desired_g, current_g, MOTOR, BRAKE, slope_gps, descent_no_brake);
 					int len = snprintf(msg, sizeof(msg),
 							"%lu %.2f %.2f\n",
 							time_elapsed, desired_g, current_g);
+
 					// Send over UART using interrupt
 					HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
 				}

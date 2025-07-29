@@ -255,6 +255,12 @@ uint8_t nrf24l01p_get_status()
     return status;
 }
 
+uint8_t nrf24l01p_get_status_fast()
+{
+	return read_register(NRF24L01P_REG_STATUS);
+}
+
+
 uint8_t nrf24l01p_get_fifo_status()
 {
     return read_register(NRF24L01P_REG_FIFO_STATUS);
