@@ -98,6 +98,9 @@ uint32_t currTime = 0;
 uint32_t prevTime = 0;
 uint32_t dt = 0;
 
+int ct = 0;
+volatile uint32_t last_interrupt_time = 0;
+
 
 bool braking = false;
 bool dataNew = false;
@@ -226,37 +229,41 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 		currTime = HAL_GetTick();
-		inputState = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_14);
-		// measure frequency of pulse from speed pin
-	    if (inputState != lastInputState) {
-			counter++;
-			lastInputState = inputState;
-	    }
+//		inputState = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_14);
+//		// measure frequency of pulse from speed pin
+//	    if (inputState != lastInputState) {
+//			counter++;
+//			lastInputState = inputState;
+//	    }
 
 	    //measure voltage to rpm
-//		if ((HAL_GetTick() - previousCountMillis) >= countMillis) {
-//			previousCountMillis = HAL_GetTick();
-//			collect_data();
-//			float volts=0;
-//			volts = ((float)voltageSent / 4095) * 5.0;
+		if ((HAL_GetTick() - previousCountMillis) >= countMillis) {
+			previousCountMillis = HAL_GetTick();
+			collect_data();
+			float volts=0;
+			volts = ((float)voltageSent / 4095) * 5.0;
+
+			float omega = sqrt( (9.81 * sqrt(current_g*current_g - 1)) / 1.4);
+			des_rpm = (omega /3.1415) * 30;
+			float post_gear_rpm = rpm / 25;
+//			// relate RPM to volts
+////			int len = snprintf(msg, sizeof(msg),
+////					"%.2f %.2f %.2f %.2f\n",
+////					volts, des_rpm, current_g, post_gear_rpm);
 //
-//			float omega = sqrt( (9.81 * sqrt(current_g*current_g - 1)) / 1.4);
-//			des_rpm = (omega /3.1415) * 30;
-
-			// relate RPM to volts
+//			// motor no brake descent rate
+////			uint8_t motor = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
+////			int len = snprintf(msg, sizeof(msg),
+////					"%.2f %.2f %u\n",
+////					volts, current_g, motor);
+//
+//
 //			int len = snprintf(msg, sizeof(msg),
-//					"%.2f %.2f %.2f %.2f %.2f\n",
-//					volts, des_rpm, rpm, avgRPM, current_g);
-
-			// motor no brake descent rate
-//			uint8_t motor = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
-//			int len = snprintf(msg, sizeof(msg),
-//					"%.2f %.2f %u\n",
-//					volts, current_g, motor);
-
-			// Send over UART using interrupt
+//				"%d\n",ct);
+//
+//			// Send over UART using interrupt
 //			HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
-//		}
+		}
 
 
 //		// if imu shits itself (PID DIES)
@@ -442,17 +449,6 @@ int main(void)
 					// Send over UART using interrupt
 					HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
 				}
-
-//				if ((HAL_GetTick() - previousCountMillis) >= countMillis) {
-//					previousCountMillis = HAL_GetTick();
-//					collect_data();
-//					int len = snprintf(msg, sizeof(msg),
-//							"%.2f %.2f\n",
-//							voltage_to_be_sent, rpm);
-//
-//					// Send over UART using interrupt
-//					HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
-//				}
 			}
 		}
 
@@ -524,12 +520,15 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 	 m | manual
 	 u | uploading mode (reading)
 	 o | on mode (running)
-	 e | evaluate (aka parsing) **/
+	 e | evaluate (aka parsing in main) **/
 
 	switch (state){
 	case 'i':
 		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
 		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
+		voltageSent = 0;
+		setValue(voltageSent);
+		state = 'i';
 		// go to upload mode
 		if(recentChar == 'u'){
 			upload_pointer = rx_buff_arm + 1;
@@ -546,7 +545,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 	case 'm':
 		//accept commands from a serial monitor to control the centrifuge
 		if(recentChar <= '9' && recentChar >= '0'){
-			voltageSent = (uint16_t)((int)(recentChar - '0') / 9.0 * 4095);
+			voltageSent = (uint16_t)((int)(recentChar - '0') / 9.0 * 3636); // 4095 //1400 to get the weird thing at level 7
 			setValue(voltageSent);
 		}else if(recentChar == 'C') { // Motor on Brake off
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET); // Motor on
@@ -560,6 +559,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 		}
 		// go to idle mode
 		else if(recentChar == 'm') {
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
+			voltageSent = 0;
+			setValue(voltageSent);
 			state = 'i';
 		}
 		break;
@@ -599,15 +602,19 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 	case 'o':
 		// go to idle mode
 		if(recentChar == 'q') {
-			state = 'i';
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
+			voltageSent = 0;
+			setValue(voltageSent);
+			state = 'i';
 		}
 		break;
 
 	default:
 		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
 		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
+		voltageSent = 0;
+		setValue(voltageSent);
 		state = 'i';
 	}
 
@@ -661,6 +668,19 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
 		current_g = sqrt((accel_x*accel_x) + (accel_y*accel_y) + (accel_z*accel_z));
 		dataNew = true;
+	}
+
+	if (GPIO_Pin == GPIO_PIN_14) {
+		counter++;
+	}
+
+	if (GPIO_Pin == GPIO_PIN_8) {
+		uint32_t now = HAL_GetTick();  // milliseconds
+		if (now - last_interrupt_time > 2)  // 50 ms debounce
+		{
+			ct++;
+			last_interrupt_time = now;
+		}
 	}
 }
 
