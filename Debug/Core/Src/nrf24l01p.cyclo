@@ -2,8 +2,8 @@
 ../Core/Src/nrf24l01p.c:18:13:cs_low	1
 ../Core/Src/nrf24l01p.c:23:13:ce_high	1
 ../Core/Src/nrf24l01p.c:28:13:ce_low	1
-../Core/Src/nrf24l01p.c:33:16:read_register	1
-../Core/Src/nrf24l01p.c:47:16:write_register	1
+../Core/Src/nrf24l01p.c:33:9:read_register	1
+../Core/Src/nrf24l01p.c:47:9:write_register	1
 ../Core/Src/nrf24l01p.c:62:9:set_address	1
 ../Core/Src/nrf24l01p.c:77:6:nrf24l01p_rx_init	1
 ../Core/Src/nrf24l01p.c:99:6:nrf24l01p_tx_init	1

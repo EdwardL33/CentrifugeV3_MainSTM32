@@ -58,6 +58,9 @@ typedef enum
 void nrf24l01p_rx_init(channel MHz, air_data_rate bps);
 void nrf24l01p_tx_init(channel MHz, air_data_rate bps);
 
+uint8_t read_register(uint8_t reg);
+uint8_t write_register(uint8_t reg, uint8_t value);
+
 void nrf24l01p_rx_receive(uint8_t* rx_payload);
 void nrf24l01p_tx_transmit(uint8_t* tx_payload);
 uint8_t set_address(uint8_t* string);

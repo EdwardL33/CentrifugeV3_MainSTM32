@@ -138,6 +138,8 @@ void SystemClock_Config(void);
 uint8_t setValue(uint16_t value);
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin);
 void collect_data();
+void process_rx();
+void check_radio_health();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -146,6 +148,7 @@ void collect_data();
 // First, create an MCP4725 object:
 MCP4725 myMCP4725;
 
+volatile uint8_t rx_flag = 0;
 /* USER CODE END 0 */
 
 /**
@@ -193,6 +196,11 @@ int main(void)
 	// initialize radio
 	nrf24l01p_rx_init(2500, _250kbps);
 
+	// turn off auto acknowledgment
+	uint8_t en_aa = read_register(NRF24L01P_REG_EN_AA);
+	en_aa &= ~(1 << 0);
+	write_register(NRF24L01P_REG_EN_AA, en_aa);
+
 	// Second, initialize the MCP4725 object:
 	myMCP4725 = MCP4725_init(&hi2c1, MCP4725A0_ADDR_A00, 5.0);
 
@@ -228,6 +236,21 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+		// rx interrupt triggered
+		if (rx_flag) {
+			process_rx();
+		}
+
+		// check radio health every 50ms
+		static uint32_t radio_check_timer = 0;
+		radio_check_timer++;
+		if(radio_check_timer > 50) {
+			radio_check_timer = 0;
+			check_radio_health();
+		}
+
+
 		currTime = HAL_GetTick();
 //		inputState = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_14);
 //		// measure frequency of pulse from speed pin
@@ -650,24 +673,7 @@ uint8_t setValue(uint16_t value){
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
 	if(GPIO_Pin == NRF24L01P_IRQ_PIN_NUMBER) {
-		nrf24l01p_rx_receive(rx_data); // read data when data ready flag is set
-		accel_x = (int16_t)(rx_data[0] | (rx_data[1] << 8)) / 2048.f;
-		accel_y = (int16_t)(rx_data[2] | (rx_data[3] << 8)) / 2048.f;
-		accel_z = (int16_t)(rx_data[4] | (rx_data[5] << 8)) / 2048.f;
-		temperature = (float)((int16_t)(rx_data[6] | (rx_data[7] << 8))) / 340 + 36.53;
-		gyro_x = (int16_t)(rx_data[8] | (rx_data[9] << 8)) / 65.5f;
-		gyro_y = (int16_t)(rx_data[10] | (rx_data[11] << 8)) / 65.5f;
-		gyro_z = (int16_t)(rx_data[12] | (rx_data[13] << 8)) / 65.5f;
-
-		accel_x -= 0.04;
-		accel_y += 0.01;
-		accel_z -= 0.05;
-		gyro_x += 4.7;
-		gyro_y -= 1.9;
-		gyro_z += 0.5;
-
-		current_g = sqrt((accel_x*accel_x) + (accel_y*accel_y) + (accel_z*accel_z));
-		dataNew = true;
+		rx_flag = 1;
 	}
 
 	if (GPIO_Pin == GPIO_PIN_14) {
@@ -697,6 +703,77 @@ void collect_data() {
 }
 
 
+void process_rx() {
+	uint8_t status = read_register(NRF24L01P_REG_STATUS);
+	uint8_t fifo_status = read_register(NRF24L01P_REG_FIFO_STATUS);
+
+	// if RX_DR (new data) is set or FIFO has data
+	if ((status & 0x40) || !(fifo_status & 0x01)) {
+		// while RX FIFO not empty
+		while(!(fifo_status & 0x01)) {
+			nrf24l01p_rx_receive(rx_data);
+
+			accel_x = (int16_t)(rx_data[0] | (rx_data[1] << 8)) / 2048.f;
+			accel_y = (int16_t)(rx_data[2] | (rx_data[3] << 8)) / 2048.f;
+			accel_z = (int16_t)(rx_data[4] | (rx_data[5] << 8)) / 2048.f;
+			temperature = (float)((int16_t)(rx_data[6] | (rx_data[7] << 8))) / 340 + 36.53;
+			gyro_x = (int16_t)(rx_data[8] | (rx_data[9] << 8)) / 65.5f;
+			gyro_y = (int16_t)(rx_data[10] | (rx_data[11] << 8)) / 65.5f;
+			gyro_z = (int16_t)(rx_data[12] | (rx_data[13] << 8)) / 65.5f;
+
+			accel_x -= 0.04;
+			accel_y += 0.01;
+			accel_z -= 0.05;
+			gyro_x += 4.7;
+			gyro_y -= 1.9;
+			gyro_z += 0.5;
+
+			current_g = sqrt((accel_x*accel_x) + (accel_y*accel_y) + (accel_z*accel_z));
+
+			char buf[200];  // adjust size if needed
+			snprintf(buf, sizeof(buf),
+			         "Accel [g]: X=%.2f, Y=%.2f, Z=%.2f | "
+			         "Gyro [°/s]: X=%.2f, Y=%.2f, Z=%.2f | "
+			         "Temp=%.2f°C | | | g=%.2f\n",
+			         accel_x, accel_y, accel_z,
+			         gyro_x, gyro_y, gyro_z,
+			         temperature, current_g);
+			HAL_UART_Transmit(&huart2, (uint8_t*)buf, strlen(buf), HAL_MAX_DELAY);
+
+			dataNew = true;
+
+			// clear RX_DR for this payload
+			write_register(NRF24L01P_REG_STATUS, 0x40);
+
+			// update fifo_status
+			fifo_status = read_register(NRF24L01P_REG_FIFO_STATUS);
+		}
+	}
+
+	// extra safety if RX FIFO somehow stuck full, flush it
+	if (fifo_status & 0x10) {
+		nrf24l01p_flush_rx_fifo();
+	}
+
+	rx_flag = 0; // processed all pending requests
+
+}
+
+void check_radio_health(){
+	uint8_t rf_ch = read_register(NRF24L01P_REG_RF_CH);
+	uint8_t status = read_register(NRF24L01P_REG_STATUS);
+
+	// if channel changed, SPI locked, or STATUS invalid
+	if (rf_ch != 0x64 || status == 0xFF || status == 0x00) {
+		nrf24l01p_rx_init(2500, _250kbps);
+
+		uint8_t en_aa = read_register(NRF24L01P_REG_EN_AA);
+		en_aa &= ~(1 << 0);
+		write_register(NRF24L01P_REG_EN_AA, en_aa);
+	}
+}
+
+
 /* USER CODE END 4 */
 
 /**
@@ -713,8 +790,7 @@ void Error_Handler(void)
 	}
   /* USER CODE END Error_Handler_Debug */
 }
-
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
