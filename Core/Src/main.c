@@ -20,6 +20,7 @@
 #include "main.h"
 #include "i2c.h"
 #include "spi.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -64,7 +65,7 @@ uint8_t tx_buff[] = {0,1,2,3,4,5,6,7,8,9};
 uint8_t rx_buff[RX_BUFF_SIZE] = {0};
 uint8_t rx_buff_arm = 0;
 uint8_t rx_data[NRF24L01P_PAYLOAD_LENGTH] = {0};
-static char msg[64];
+static char msg[120];
 
 // imu datas
 float accel_x = 0;
@@ -114,7 +115,7 @@ uint16_t voltageSent = 0;
 uint32_t time_start = 0;
 uint32_t time_elapsed = 0;
 uint32_t lastPrintTime = 0;
-uint32_t printInterval = 500; // ms for every print
+uint32_t printInterval = 50; // ms for every print
 
 uint32_t profile_ms[MAX_POINTS] = {0};
 float profile_g[MAX_POINTS] = {0};
@@ -187,12 +188,14 @@ int main(void)
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
+  MX_TIM2_Init();
+
   /* USER CODE BEGIN 2 */
 
 	// begins listening for a byte. When byte is recieved, it calls the callback function
 	HAL_UART_Receive_IT(&huart2, rx_buff, 1);
 
-
+	HAL_TIM_Base_Start_IT(&htim2);
 	// initialize radio
 	nrf24l01p_rx_init(2500, _250kbps);
 
@@ -237,27 +240,28 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
+		// initialize to 0, if still 0 after a loop that means radio is cooked
+//		accel_x = 0;
+//		accel_y = 0;
+//		accel_z = 0;
+//		gyro_x = 0;
+//		gyro_y = 0;
+//		gyro_z = 0;
 		// rx interrupt triggered
-		if (rx_flag) {
-			process_rx();
-		}
+//		if (rx_flag) {
+//			process_rx();
+//		}
 
 		// check radio health every 50ms
-		static uint32_t radio_check_timer = 0;
-		radio_check_timer++;
-		if(radio_check_timer > 50) {
-			radio_check_timer = 0;
-			check_radio_health();
-		}
+//		static uint32_t radio_check_timer = 0;
+//		radio_check_timer++;
+//		if(radio_check_timer > 50) {
+//			radio_check_timer = 0;
+//			check_radio_health();
+//		}
 
 
 		currTime = HAL_GetTick();
-//		inputState = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_14);
-//		// measure frequency of pulse from speed pin
-//	    if (inputState != lastInputState) {
-//			counter++;
-//			lastInputState = inputState;
-//	    }
 
 	    //measure voltage to rpm
 		if ((HAL_GetTick() - previousCountMillis) >= countMillis) {
@@ -270,21 +274,15 @@ int main(void)
 			des_rpm = (omega /3.1415) * 30;
 			float post_gear_rpm = rpm / 25;
 //			// relate RPM to volts
-////			int len = snprintf(msg, sizeof(msg),
-////					"%.2f %.2f %.2f %.2f\n",
-////					volts, des_rpm, current_g, post_gear_rpm);
-//
+//			int len = snprintf(msg, sizeof(msg),
+//					"%.2f %.2f %.2f %.2f\n",
+//					volts, des_rpm, current_g, post_gear_rpm);
 //			// motor no brake descent rate
 ////			uint8_t motor = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
 ////			int len = snprintf(msg, sizeof(msg),
 ////					"%.2f %.2f %u\n",
 ////					volts, current_g, motor);
-//
-//
-//			int len = snprintf(msg, sizeof(msg),
-//				"%d\n",ct);
-//
-//			// Send over UART using interrupt
+			// Send over UART using interrupt
 //			HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
 		}
 
@@ -462,15 +460,19 @@ int main(void)
 				    uint8_t BRAKE = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9);
 				    uint8_t MOTOR = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
 				    memset(msg, 0, sizeof(msg));  // clear garbage from buffer
-//					int len = snprintf(msg, sizeof(msg),
-//							"%lu %.2f %.2f %u %u %.2f %.2f\n",
-//							time_elapsed, desired_g, current_g, MOTOR, BRAKE, slope_gps, descent_no_brake);
-					int len = snprintf(msg, sizeof(msg),
-							"%lu %.2f %.2f\n",
+//				    int len = snprintf(msg, sizeof(msg),
+//				    		"Accel [g]: X=%.2f, Y=%.2f, Z=%.2f | "
+//				    		"Gyro [°/s]: X=%.2f, Y=%.2f, Z=%.2f | "
+//				    		"Temp=%.2f°C | g=%.2f\n",
+//							accel_x, accel_y, accel_z,
+//							gyro_x, gyro_y, gyro_z,
+//							temperature, current_g);
+				    int len = snprintf(msg, sizeof(msg),
+				    		"%lu %.2f %.2f\n",
 							time_elapsed, desired_g, current_g);
-
-					// Send over UART using interrupt
-					HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
+				    //
+				    //					// Send over UART using interrupt
+				    HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
 				}
 			}
 		}
@@ -673,20 +675,36 @@ uint8_t setValue(uint16_t value){
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
 	if(GPIO_Pin == NRF24L01P_IRQ_PIN_NUMBER) {
-		rx_flag = 1;
-	}
+//		uint8_t status = read_register(NRF24L01P_REG_STATUS);
+//		uint8_t fifo_status = read_register(NRF24L01P_REG_FIFO_STATUS);
 
-	if (GPIO_Pin == GPIO_PIN_14) {
-		counter++;
-	}
+		nrf24l01p_rx_receive(rx_data);
 
-	if (GPIO_Pin == GPIO_PIN_8) {
-		uint32_t now = HAL_GetTick();  // milliseconds
-		if (now - last_interrupt_time > 2)  // 50 ms debounce
-		{
-			ct++;
-			last_interrupt_time = now;
-		}
+//		// flush if RX_FIFO somehow full
+//		if (fifo_status & 0x10) {
+//			nrf24l01p_flush_rx_fifo();
+//		}
+//
+//		// clear RX_DR for this payload
+//		write_register(NRF24L01P_REG_STATUS, 0x40);
+
+		accel_x = (int16_t)(rx_data[0] | (rx_data[1] << 8)) / 2048.f;
+		accel_y = (int16_t)(rx_data[2] | (rx_data[3] << 8)) / 2048.f;
+		accel_z = (int16_t)(rx_data[4] | (rx_data[5] << 8)) / 2048.f;
+		temperature = (float)((int16_t)(rx_data[6] | (rx_data[7] << 8))) / 340 + 36.53;
+		gyro_x = (int16_t)(rx_data[8] | (rx_data[9] << 8)) / 65.5f;
+		gyro_y = (int16_t)(rx_data[10] | (rx_data[11] << 8)) / 65.5f;
+		gyro_z = (int16_t)(rx_data[12] | (rx_data[13] << 8)) / 65.5f;
+
+		accel_x -= 0.03;
+		accel_y += 0.01;
+		accel_z -= 0.03;
+		gyro_x += 4.7;
+		gyro_y -= 1.9;
+		gyro_z += 0.5;
+
+		current_g = sqrt((accel_x*accel_x) + (accel_y*accel_y) + (accel_z*accel_z));
+
 	}
 }
 
@@ -721,24 +739,24 @@ void process_rx() {
 			gyro_y = (int16_t)(rx_data[10] | (rx_data[11] << 8)) / 65.5f;
 			gyro_z = (int16_t)(rx_data[12] | (rx_data[13] << 8)) / 65.5f;
 
-			accel_x -= 0.04;
+			accel_x -= 0.03;
 			accel_y += 0.01;
-			accel_z -= 0.05;
+			accel_z -= 0.03;
 			gyro_x += 4.7;
 			gyro_y -= 1.9;
 			gyro_z += 0.5;
 
 			current_g = sqrt((accel_x*accel_x) + (accel_y*accel_y) + (accel_z*accel_z));
 
-			char buf[200];  // adjust size if needed
-			snprintf(buf, sizeof(buf),
-			         "Accel [g]: X=%.2f, Y=%.2f, Z=%.2f | "
-			         "Gyro [°/s]: X=%.2f, Y=%.2f, Z=%.2f | "
-			         "Temp=%.2f°C | | | g=%.2f\n",
-			         accel_x, accel_y, accel_z,
-			         gyro_x, gyro_y, gyro_z,
-			         temperature, current_g);
-			HAL_UART_Transmit(&huart2, (uint8_t*)buf, strlen(buf), HAL_MAX_DELAY);
+//			char buf[200];  // adjust size if needed
+//			snprintf(buf, sizeof(buf),
+//			         "Accel [g]: X=%.2f, Y=%.2f, Z=%.2f | "
+//			         "Gyro [°/s]: X=%.2f, Y=%.2f, Z=%.2f | "
+//			         "Temp=%.2f°C | g=%.2f\n",
+//			         accel_x, accel_y, accel_z,
+//			         gyro_x, gyro_y, gyro_z,
+//			         temperature, current_g);
+//			HAL_UART_Transmit(&huart2, (uint8_t*)buf, strlen(buf), HAL_MAX_DELAY);
 
 			dataNew = true;
 
@@ -771,6 +789,20 @@ void check_radio_health(){
 		en_aa &= ~(1 << 0);
 		write_register(NRF24L01P_REG_EN_AA, en_aa);
 	}
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance == TIM2)   // check that it was TIM2
+    {
+        // Your 1ms code here
+        inputState = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_14);
+
+        if (inputState != lastInputState) {
+            counter++;
+            lastInputState = inputState;
+        }
+    }
 }
 
 
