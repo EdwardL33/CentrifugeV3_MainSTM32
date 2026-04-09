@@ -84,10 +84,11 @@ float avgRPM = 0;
 float numPoints = 0;
 volatile uint32_t counter = 0;
 uint32_t previousCountMillis = 0;
-const uint32_t countMillis = 500; // half a second
+const uint32_t countMillis = 100; // ms for sampling speed line
 float rpm = 0;
 float sum = 0;
 float des_rpm = 0;
+float post_gear_rpm = 0;
 
 
 // PID controller
@@ -115,7 +116,7 @@ uint16_t voltageSent = 0;
 uint32_t time_start = 0;
 uint32_t time_elapsed = 0;
 uint32_t lastPrintTime = 0;
-uint32_t printInterval = 50; // ms for every print
+uint32_t printInterval = 100; // ms for every print
 
 uint32_t profile_ms[MAX_POINTS] = {0};
 float profile_g[MAX_POINTS] = {0};
@@ -131,6 +132,14 @@ char state = 'i';
 
 int upload_pointer = 0;
 
+// Live Expression Watching
+int pa9_state = 0;
+int pa10_state = 0;
+int scaled_voltage = 0;
+float slope_gps = 0;
+float desired_g = 0;
+float descent_no_brake = 0;
+char recentChar = 'i';
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -184,12 +193,10 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
   MX_TIM2_Init();
-
   /* USER CODE BEGIN 2 */
 
 	// begins listening for a byte. When byte is recieved, it calls the callback function
@@ -205,7 +212,7 @@ int main(void)
 	write_register(NRF24L01P_REG_EN_AA, en_aa);
 
 	// Second, initialize the MCP4725 object:
-	myMCP4725 = MCP4725_init(&hi2c1, MCP4725A0_ADDR_A00, 5.0);
+	myMCP4725 = MCP4725_init(&hi2c1, MCP4725A0_ADDR_A00, MCP4725_REFERENCE_VOLTAGE);
 
 	// Check the connection:
 	if(MCP4725_isConnected(&myMCP4725)){
@@ -239,6 +246,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+		pa9_state = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9); // 0 for brake on
+		pa10_state = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10); // 0 for motor off
 
 		// initialize to 0, if still 0 after a loop that means radio is cooked
 //		accel_x = 0;
@@ -262,30 +271,39 @@ int main(void)
 
 
 		currTime = HAL_GetTick();
-
-	    //measure voltage to rpm
-		if ((HAL_GetTick() - previousCountMillis) >= countMillis) {
-			previousCountMillis = HAL_GetTick();
-			collect_data();
-			float volts=0;
-			volts = ((float)voltageSent / 4095) * 5.0;
-
-			float omega = sqrt( (9.81 * sqrt(current_g*current_g - 1)) / 1.4);
-			des_rpm = (omega /3.1415) * 30;
-			float post_gear_rpm = rpm / 25;
-//			// relate RPM to volts
-//			int len = snprintf(msg, sizeof(msg),
-//					"%.2f %.2f %.2f %.2f\n",
-//					volts, des_rpm, current_g, post_gear_rpm);
-//			// motor no brake descent rate
-////			uint8_t motor = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
-////			int len = snprintf(msg, sizeof(msg),
-////					"%.2f %.2f %u\n",
-////					volts, current_g, motor);
-			// Send over UART using interrupt
-//			HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
+		// pin setting is getting overriden by main due to ISR interrupting in random places
+		if (state == 'i') {
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
+			voltageSent = 0;
+			setValue(voltageSent);
 		}
 
+
+		else if (state == 'm') {
+			//measure voltage to rpm
+			if ((HAL_GetTick() - previousCountMillis) >= countMillis) {
+				previousCountMillis = HAL_GetTick();
+				collect_data();
+				float volts=0;
+				volts = ((float)voltageSent / 4095) * 3.3;
+
+				float omega = sqrt( (9.81 * sqrt(current_g*current_g - 1)) / 1.4);
+				des_rpm = (omega /3.1415) * 30;
+				post_gear_rpm = rpm / 25;
+	//			// relate RPM to volts
+				int len = snprintf(msg, sizeof(msg),
+						"%.4f %.4f %.4f %.4f\n",
+						volts, des_rpm, current_g, post_gear_rpm);
+	//			// motor no brake descent rate
+	////			uint8_t motor = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
+	////			int len = snprintf(msg, sizeof(msg),
+	////					"%.2f %.2f %u\n",
+	////					volts, current_g, motor);
+				// Send over UART using interrupt
+				HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
+			}
+		}
 
 //		// if imu shits itself (PID DIES)
 //		if(dataNew){
@@ -296,8 +314,9 @@ int main(void)
 //			state = 'i';
 //		}
 
+
 		// evaluation mode (parsing the profile)
-		if (state == 'e') {
+		else if (state == 'e') {
 			dt = currTime - prevTime; // for PID
 			int i = upload_pointer; // where the instruction starts in our rx_buffer
 			char parseChar = *(rx_buff + i); // grab the first character our rx_buffer
@@ -387,9 +406,9 @@ int main(void)
 				}
 
 				// calculate descent slope for braking on sharp changes
-				float slope_gps = (next_desired_g - prev_desired_g) / ((next_desired_ms - prev_desired_ms) / 1000);
-				float desired_g = ((next_desired_g - prev_desired_g) * (time_elapsed - prev_desired_ms) / (next_desired_ms - prev_desired_ms)) + prev_desired_g;
-				float descent_no_brake = -0.312*desired_g + 0.278;
+				slope_gps = (next_desired_g - prev_desired_g) / ((next_desired_ms - prev_desired_ms) / 1000);
+				desired_g = ((next_desired_g - prev_desired_g) * (time_elapsed - prev_desired_ms) / (next_desired_ms - prev_desired_ms)) + prev_desired_g;
+				descent_no_brake = -0.312*desired_g + 0.278;
 
 				braking = false;
 				// only set braking if the slope is negative
@@ -431,24 +450,39 @@ int main(void)
 					float omega = sqrt( (9.81 * sqrt(desired_g*desired_g - 1)) / a);
 					des_rpm = (omega /3.1415) * 30;
 					voltage_to_be_sent = (0.0433*des_rpm) + (-0.000354 * des_rpm*des_rpm) + (0.00000304 * des_rpm*des_rpm*des_rpm); // cubic FF
-					error = desired_g - current_g;
-					integral += (dt/1000.0) * (error + lastError) / 2;
 
-					if (integral > integralCap){
-						integral  = integralCap;
+					/* old PID, skip for now */
+//					error = desired_g - current_g;
+//					integral += (dt/1000.0) * (error + lastError) / 2;
+//
+//					if (integral > integralCap){
+//						integral  = integralCap;
+//					}
+//
+//					pid = kP * error + kI * integral + kD * (error - lastError) / (dt/1000.0) + voltage_to_be_sent;
+//
+//					// vref is 3.3 but clamp to 3
+//					if (pid > 3) {
+//						pid = 3;
+//					}
+//			        if (pid < 0){
+//			          pid = 0;
+//			        }
+
+
+//					int scaled_voltage = (uint16_t)((pid / 5) * 4095); // scale the voltage from 0-5 to 0-4095 to be sent though the DAC
+
+
+
+					// vref is 3.3 but clamp to 3
+					if (voltage_to_be_sent > 3) {
+						voltage_to_be_sent = 3;
+					}
+					if (voltage_to_be_sent < 0){
+						voltage_to_be_sent = 0;
 					}
 
-					pid = kP * error + kI * integral + kD * (error - lastError) / (dt/1000.0) + voltage_to_be_sent;
-					if (pid > 5) {
-						pid = 5;
-					}
-			        if (pid < 0){
-			          pid = 0;
-			        }
-
-
-
-					int scaled_voltage = (uint16_t)((pid / 5) * 4095); // scale the voltage from 0-5 to 0-4095 to be sent though the DAC
+					scaled_voltage = (uint16_t)((voltage_to_be_sent / 3.3) * 4095); // scale the voltage from 0-5 to 0-4095 to be sent though the DAC
 					setValue(scaled_voltage);
 
 				    lastError = error;
@@ -457,8 +491,8 @@ int main(void)
 
 				if (HAL_GetTick() - lastPrintTime >= printInterval) {
 				    lastPrintTime = HAL_GetTick();
-				    uint8_t BRAKE = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9);
-				    uint8_t MOTOR = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
+//				    uint8_t BRAKE = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9);
+//				    uint8_t MOTOR = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
 				    memset(msg, 0, sizeof(msg));  // clear garbage from buffer
 //				    int len = snprintf(msg, sizeof(msg),
 //				    		"Accel [g]: X=%.2f, Y=%.2f, Z=%.2f | "
@@ -468,10 +502,8 @@ int main(void)
 //							gyro_x, gyro_y, gyro_z,
 //							temperature, current_g);
 				    int len = snprintf(msg, sizeof(msg),
-				    		"%lu %.2f %.2f\n",
-							time_elapsed, desired_g, current_g);
-				    //
-				    //					// Send over UART using interrupt
+				    		"%lu %.2f %.2f %.2f\n",
+							time_elapsed, desired_g, current_g, post_gear_rpm);
 				    HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
 				}
 			}
@@ -484,8 +516,12 @@ int main(void)
 			led = !led;
 			if(led){
 				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
 			}else{
 				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
 			}
 		}
 		HAL_Delay(1);
@@ -536,7 +572,7 @@ void SystemClock_Config(void)
 
 // For serial monitor
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
-	char recentChar = *(rx_buff + rx_buff_arm); // the most recent character that has not been read yet
+	recentChar = *(rx_buff + rx_buff_arm); // the most recent character that has not been read yet
 
 	/** fsm for the centrifuge:
 	-------------------------------
@@ -570,7 +606,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 	case 'm':
 		//accept commands from a serial monitor to control the centrifuge
 		if(recentChar <= '9' && recentChar >= '0'){
-			voltageSent = (uint16_t)((int)(recentChar - '0') / 9.0 * 3636); // 4095 //1400 to get the weird thing at level 7
+			voltageSent = (uint16_t)((int)(recentChar - '0') / 9.0 * 4095); // 4095 //1400 to get the weird thing at level 7
 			setValue(voltageSent);
 		}else if(recentChar == 'C') { // Motor on Brake off
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET); // Motor on
@@ -627,8 +663,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 	case 'o':
 		// go to idle mode
 		if(recentChar == 'q') {
-			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
-			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET); //Brake on
 			voltageSent = 0;
 			setValue(voltageSent);
 			state = 'i';
@@ -710,7 +744,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
 // grabs data from the motor and averages it
 void collect_data() {
-	rpm = (counter * 20) / 4.0;
+	rpm = (counter * 20 *(500/countMillis)) / 4.0;
 	sum = avgRPM * numPoints;
 	sum += rpm;
 	numPoints++;

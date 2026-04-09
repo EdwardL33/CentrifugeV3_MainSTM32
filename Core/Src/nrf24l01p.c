@@ -121,7 +121,7 @@ void nrf24l01p_rx_receive(uint8_t* rx_payload)
     nrf24l01p_read_rx_fifo(rx_payload);
     nrf24l01p_clear_rx_dr();
 
-    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
 }
 
 void nrf24l01p_tx_transmit(uint8_t* tx_payload)
@@ -137,14 +137,14 @@ void nrf24l01p_tx_irq()
     if(tx_ds)
     {
         // TX_DS
-        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
         nrf24l01p_clear_tx_ds();
     }
 
     else
     {
         // MAX_RT
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, SET);
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, SET);
         nrf24l01p_clear_max_rt();
     }
 }
