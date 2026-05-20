@@ -57,9 +57,15 @@
 
 
 #define integralCap 300
-#define kP 2 //1
-#define kI 0 //0.005
-#define kD 1 //0.00001
+/*FF only, PID off*/
+//#define kP 0
+//#define kI 0
+//#define kD 0
+
+#define kP 0.05
+#define kI 0.005
+#define kD 0
+
 
 uint8_t tx_buff[] = {0,1,2,3,4,5,6,7,8,9};
 uint8_t rx_buff[RX_BUFF_SIZE] = {0};
@@ -92,13 +98,16 @@ float post_gear_rpm = 0;
 
 
 // PID controller
-float pid = 0;
+float voltage_pid = 0;
 float lastError = 0;
 float error = 0;
 float integral = 0;
 uint32_t currTime = 0;
 uint32_t prevTime = 0;
 uint32_t dt = 0;
+
+// variables for PID
+float current_omega = 0;
 
 int ct = 0;
 volatile uint32_t last_interrupt_time = 0;
@@ -135,7 +144,7 @@ int upload_pointer = 0;
 // Live Expression Watching
 int pa9_state = 0;
 int pa10_state = 0;
-int scaled_voltage = 0;
+uint16_t scaled_voltage = 0;
 float slope_gps = 0;
 float desired_g = 0;
 float descent_no_brake = 0;
@@ -317,7 +326,7 @@ int main(void)
 
 		// evaluation mode (parsing the profile)
 		else if (state == 'e') {
-			dt = currTime - prevTime; // for PID
+//			dt = currTime - prevTime; // for PID
 			int i = upload_pointer; // where the instruction starts in our rx_buffer
 			char parseChar = *(rx_buff + i); // grab the first character our rx_buffer
 			char numberBuffer[40] = {0}; // create a number buffer to atoi into our ms and g arrays
@@ -331,10 +340,13 @@ int main(void)
 				if(evaluateState == 'm'){
 					// if its a number, store it into numberBuffer
 					if((parseChar <= '9' && parseChar >= '0')){
-						numberBuffer[numberBufferArm++] = parseChar;
+					    if (numberBufferArm < 39) { // Leave room for null terminator if needed
+					        numberBuffer[numberBufferArm++] = parseChar;
+					    }
+					}
 
-						// if its a comma, flush it all to the ms array and switch to evaluating g
-					}else if(parseChar == ','){
+					// if its a comma, flush it all to the ms array and switch to evaluating g
+					else if(parseChar == ','){
 						profile_ms[profile_arm] = atoi(numberBuffer);
 						memset(numberBuffer, 0, 40);
 						numberBufferArm = 0;
@@ -346,8 +358,9 @@ int main(void)
 
 					// if its a number, store it into numberBuffer
 					if((parseChar <= '9' && parseChar >= '0') || parseChar == '.'){
-						numberBuffer[numberBufferArm++] = parseChar;
-
+						if (numberBufferArm < 39) { // Leave room for null terminator if needed
+							 numberBuffer[numberBufferArm++] = parseChar;
+						}
 						// upon reaching a new line, flush everything in numberBuffer to g array and go back to m
 					}else if(parseChar == '\n'){
 						profile_g[profile_arm++] = atof(numberBuffer);
@@ -385,7 +398,7 @@ int main(void)
 				}
 			}
 
-			// we've reached the end of our instructions, so turn everything off and go to idl mode
+			// we've reached the end of our instructions, so turn everything off and go to idle mode
 			if(index == profile_arm){
 				state = 'i';
 				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off
@@ -422,6 +435,7 @@ int main(void)
 				}
 				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET); // Motor on (for when it got turned off by brake mode last time)
 
+				braking = false; // TEST INSERT TO TURN OFF BRAKE DESCENT
 				// when brake mode on, brake if our desired_g is greater than our current_g
 				if (braking) {
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); // Motor off when in brake mode
@@ -438,51 +452,64 @@ int main(void)
 
 				// brake mode is off so use voltage to rpm equation to set speed of the centrifuge
 				else {
+					dt = currTime - prevTime;
+
+					if (dt == 0) {
+						dt = 1; // Safety clamp for extremely fast loop iterations
+					}
+
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET); // Motor on
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET); //Brake off
-//					float desired_mps = desired_g * 9.81; // meters per second for the equation
-//					float c = (9.81/desired_mps);
-//					float a = 1.4; // centrifuge arm radius meters
-//					float b = 0; // gondola radius meters (0.25 if gondola exists)
-//					float omega = sqrt((desired_mps - 9.81) / (a + (b *sqrt(1-(c*c))))); // equation to get desired omega from desired mps
 
-					float a = 1.4; // centrifuge arm radius meters
-					float omega = sqrt( (9.81 * sqrt(desired_g*desired_g - 1)) / a);
-					des_rpm = (omega /3.1415) * 30;
-					voltage_to_be_sent = (0.0433*des_rpm) + (-0.000354 * des_rpm*des_rpm) + (0.00000304 * des_rpm*des_rpm*des_rpm); // cubic FF
-
-					/* old PID, skip for now */
-//					error = desired_g - current_g;
-//					integral += (dt/1000.0) * (error + lastError) / 2;
-//
-//					if (integral > integralCap){
-//						integral  = integralCap;
-//					}
-//
-//					pid = kP * error + kI * integral + kD * (error - lastError) / (dt/1000.0) + voltage_to_be_sent;
-//
-//					// vref is 3.3 but clamp to 3
-//					if (pid > 3) {
-//						pid = 3;
-//					}
-//			        if (pid < 0){
-//			          pid = 0;
-//			        }
-
-
-//					int scaled_voltage = (uint16_t)((pid / 5) * 4095); // scale the voltage from 0-5 to 0-4095 to be sent though the DAC
-
-
-
-					// vref is 3.3 but clamp to 3
-					if (voltage_to_be_sent > 3) {
-						voltage_to_be_sent = 3;
-					}
-					if (voltage_to_be_sent < 0){
-						voltage_to_be_sent = 0;
+					// clamp desired_g to 1
+					if (desired_g < 1.0) {
+					    desired_g = 1.0;
 					}
 
-					scaled_voltage = (uint16_t)((voltage_to_be_sent / 3.3) * 4095); // scale the voltage from 0-5 to 0-4095 to be sent though the DAC
+					float a = 1.3; // centrifuge arm radius meters
+					float L = 0.22; // hinge to imu radius meters
+					float sin_theta = sqrt(desired_g * desired_g - 1.0) / desired_g;
+					float r_total = a + L * sin_theta;
+					float des_omega = sqrt((9.81 * sqrt(desired_g*desired_g - 1)) / r_total);
+					des_rpm = (des_omega /3.1415) * 30;
+
+					// feedforward from des_rpm
+					float voltage_ff = (-0.000459) + (0.0283 * des_rpm) + (-0.000225* des_rpm * des_rpm) + (0.0000025* des_rpm * des_rpm* des_rpm);
+
+
+					/* PID*/
+
+					//clamp imu reading
+					if (current_g < 1.0) {
+						current_g = 1.0;
+					}
+					current_omega = sqrt((9.81f * sqrt((current_g * current_g) - 1.0f)) / r_total);
+					float current_rpm = (current_omega / 3.1415f) * 30.0f;
+
+					error = des_rpm - current_rpm;
+					integral += (dt/1000.0f) * (error + lastError) / 2.0f;
+
+					// cap integral in both directions
+					if (integral > integralCap) {
+					    integral = integralCap;
+					} else if (integral < -integralCap) {
+					    integral = -integralCap;
+					}
+
+
+					voltage_pid = kP * error + kI * integral + kD * (error - lastError) / (dt/1000.0);
+
+					// combine pid with ff
+					float voltage_to_be_sent = voltage_ff + voltage_pid;
+
+					// vref is 3.3 but clamp to 3.0
+					if (voltage_to_be_sent > 3.0f) {
+					    voltage_to_be_sent = 3.0f;
+					} else if (voltage_to_be_sent < 0.0f) {
+					    voltage_to_be_sent = 0.0f;
+					}
+
+					scaled_voltage = (uint16_t)((voltage_to_be_sent / 3.3f) * 4095); // scale the voltage from 0-3.3 to 0-4095 to be sent though the DAC
 					setValue(scaled_voltage);
 
 				    lastError = error;
@@ -501,9 +528,11 @@ int main(void)
 //							accel_x, accel_y, accel_z,
 //							gyro_x, gyro_y, gyro_z,
 //							temperature, current_g);
+				    collect_data(); // THIS ONLY WORKS AT 100ms I THINK
+				    post_gear_rpm = rpm / 25;
 				    int len = snprintf(msg, sizeof(msg),
-				    		"%lu %.2f %.2f %.2f\n",
-							time_elapsed, desired_g, current_g, post_gear_rpm);
+				    		"%lu %.2f %.2f %.2f %.2f\n",
+							time_elapsed, desired_g, current_g, post_gear_rpm, current_omega);
 				    HAL_UART_Transmit_IT(&huart2, (uint8_t*)msg, len);
 				}
 			}
@@ -592,7 +621,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 		state = 'i';
 		// go to upload mode
 		if(recentChar == 'u'){
-			upload_pointer = rx_buff_arm + 1;
+			upload_pointer = (rx_buff_arm + 1) % RX_BUFF_SIZE;
 			state = 'u';
 		}
 		// go to manual mode
@@ -634,13 +663,14 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 		// go to ON mode
 		if (recentChar == 'o'){
 			time_start = HAL_GetTick();
+			prevTime = time_start; // Prime the PID timer before it starts
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET); // Motor on
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET); //Brake off
 			state = 'o';
 		}
 		// go to upload mode
 		else if(recentChar == 'u') {
-			upload_pointer = rx_buff_arm + 1;
+			upload_pointer =  (rx_buff_arm + 1) % RX_BUFF_SIZE;
 			state = 'u';
 		}
 		// go to manual mode
